@@ -3,6 +3,7 @@ import aiofiles
 import gui
 import time
 import argparse
+import logging
 
 
 async def generate_msgs(queue):
@@ -22,6 +23,11 @@ async def read_msgs(host, port, messages_queue, save_queue):
     finally:
         writer.close()
         await writer.wait_closed()
+
+
+async def send_msgs(host, port, queue):
+    msg = await queue.get()
+    sender_logger.debug(f'Пользователь написал: {msg}')
 
 
 async def save_messages(filepath, queue):
@@ -49,6 +55,7 @@ async def main(host, read_port, send_port, history_filepath):
 
     await asyncio.gather(
         read_msgs(host, read_port, messages_queue, save_queue),
+        send_msgs(host, send_port, sending_queue),
         save_messages(history_filepath, save_queue),
         gui.draw(messages_queue, sending_queue, status_updates_queue)
     )
@@ -62,5 +69,8 @@ if __name__ == '__main__':
     parser.add_argument('--history', type=str, default='./minechat.history',
         help='The path to the file with the message history.')
     args = parser.parse_args()
+
+    logging.basicConfig(level=logging.DEBUG)
+    sender_logger = logging.getLogger('sender')
 
     asyncio.run(main(args.host, args.read_port, args.send_port, args.history))
