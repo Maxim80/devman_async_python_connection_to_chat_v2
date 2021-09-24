@@ -31,11 +31,21 @@ async def save_messages(filepath, queue):
             await f.write(msg)
 
 
+async def loading_messages_history(filepath, queue):
+    async with aiofiles.open(filepath, 'r') as f:
+        msgs = await f.readlines()
+
+    if msgs:
+        [queue.put_nowait(msg) for msg in msgs]
+
+
 async def main(host, read_port, send_port, history_filepath):
     messages_queue = asyncio.Queue()
     sending_queue = asyncio.Queue()
     save_queue = asyncio.Queue()
     status_updates_queue = asyncio.Queue()
+
+    await loading_messages_history(history_filepath, messages_queue)
 
     await asyncio.gather(
         read_msgs(host, read_port, messages_queue, save_queue),
