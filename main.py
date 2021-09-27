@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+from tkinter import messagebox
 import asyncio
 import aiofiles
 import gui
@@ -9,10 +10,36 @@ import os
 import json
 
 
+class InvalidToken(Exception):
+    pass
+
+
 async def generate_msgs(queue):
     while True:
         queue.put_nowait(f'Ping {time.time()}')
         await asyncio.sleep(0)
+
+
+async def authorize(host, port, token):
+    try:
+        reader, writer = await asyncio.open_connection(host, port)
+        await reader.readline()
+        writer.write(f'{token}\n'.encode())
+        await writer.drain()
+        answer = await reader.readline()
+    except:
+        writer.close()
+        await writer.wait_closed()
+
+    answer = json.loads(answer.decode())
+    if answer is None:
+        writer.close()
+        await writer.wait_closed()
+        raise InvalidToken
+
+    nickname = answer['nickname']
+    logger.debug(f'Выполнена авторизация. Пользователь {nickname}')
+    return reader, writer
 
 
 async def read_msgs(host, port, messages_queue, save_queue):
@@ -28,9 +55,12 @@ async def read_msgs(host, port, messages_queue, save_queue):
         await writer.wait_closed()
 
 
-async def send_msgs(host, port, queue):
-    msg = await queue.get()
-    logger.debug(f'Пользователь написал: {msg}')
+async def send_msgs(host, port, writer, queue):
+    while True:
+        msg = await queue.get()
+        writer.write(f'{msg}\n\n'.encode())
+        await writer.drain()
+        logger.debug(f'Пользователь написал: {msg}')
 
 
 async def save_messages(filepath, queue):
@@ -41,30 +71,14 @@ async def save_messages(filepath, queue):
 
 
 async def loading_messages_history(filepath, queue):
-    async with aiofiles.open(filepath, 'r') as f:
-        msgs = await f.readlines()
+    try:
+        async with aiofiles.open(filepath, 'r') as f:
+            msgs = await f.readlines()
+    except FileNotFoundError:
+        return
 
     if msgs:
         [queue.put_nowait(msg) for msg in msgs]
-
-
-async def authorize(host, port, token):
-    try:
-        reader, writer = await asyncio.open_connection(host, port)
-        await reader.readline()
-        writer.write(f'{token}\n'.encode())
-        answer = await reader.readline()
-    except:
-        writer.close()
-        await writer.wait_closed()
-
-    answer = json.loads(answer.decode())
-    nickname = answer['nickname']
-    if answer is None:
-        logger.debug('Авторизация не выполнена. Проверьте указанный токен или выполните регистрацию заново.')
-        return
-    else:
-        logger.debug(f'Выполнена авторизация. Пользователь {nickname}')
 
 
 async def main(host, read_port, send_port, history_filepath, token):
@@ -73,14 +87,18 @@ async def main(host, read_port, send_port, history_filepath, token):
     save_queue = asyncio.Queue()
     status_updates_queue = asyncio.Queue()
 
-    await authorize(host, send_port, token)
+    try:
+        reader, writer = await authorize(host, send_port, token)
+    except InvalidToken:
+        messagebox.showerror('Неверный токен', 'Проверьте токен. Сервер неузнал его.')
+        return
 
-    # await loading_messages_history(history_filepath, messages_queue)
+    await loading_messages_history(history_filepath, messages_queue)
 
     await asyncio.gather(
-        # read_msgs(host, read_port, messages_queue, save_queue),
-        # send_msgs(host, send_port, sending_queue),
-        # save_messages(history_filepath, save_queue),
+        read_msgs(host, read_port, messages_queue, save_queue),
+        send_msgs(host, send_port, writer, sending_queue),
+        save_messages(history_filepath, save_queue),
         gui.draw(messages_queue, sending_queue, status_updates_queue)
     )
 
