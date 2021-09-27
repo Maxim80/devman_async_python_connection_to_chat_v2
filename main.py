@@ -21,15 +21,11 @@ async def generate_msgs(queue):
 
 
 async def authorize(host, port, token):
-    try:
-        reader, writer = await asyncio.open_connection(host, port)
-        await reader.readline()
-        writer.write(f'{token}\n'.encode())
-        await writer.drain()
-        answer = await reader.readline()
-    except:
-        writer.close()
-        await writer.wait_closed()
+    reader, writer = await asyncio.open_connection(host, port)
+    await reader.readline()
+    writer.write(f'{token}\n'.encode())
+    await writer.drain()
+    answer = await reader.readline()
 
     answer = json.loads(answer.decode())
     if answer is None:
@@ -39,12 +35,14 @@ async def authorize(host, port, token):
 
     nickname = answer['nickname']
     logger.debug(f'Выполнена авторизация. Пользователь {nickname}')
-    return reader, writer
+    return reader, writer, nickname
 
 
-async def read_msgs(host, port, messages_queue, save_queue):
+async def read_msgs(host, port, messages_queue, status_updates_queue, save_queue):
     try:
+        status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.INITIATED)
         reader, writer = await asyncio.open_connection(host, port)
+        status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
         while True:
             msg = await reader.readline()
             messages_queue.put_nowait(msg.decode())
@@ -55,12 +53,24 @@ async def read_msgs(host, port, messages_queue, save_queue):
         await writer.wait_closed()
 
 
-async def send_msgs(host, port, writer, queue):
-    while True:
-        msg = await queue.get()
-        writer.write(f'{msg}\n\n'.encode())
-        await writer.drain()
-        logger.debug(f'Пользователь написал: {msg}')
+async def send_msgs(host, port, token, sending_queue, status_updates_queue):
+    try:
+        status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.INITIATED)
+        reader, writer, nickname = await authorize(host, port, token)
+        status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
+        status_updates_queue.put_nowait(gui.NicknameReceived(nickname))
+        while True:
+            msg = await sending_queue.get()
+            writer.write(f'{msg}\n\n'.encode())
+            await writer.drain()
+            logger.debug(f'Пользователь написал: {msg}')
+
+    except InvalidToken:
+        messagebox.showerror('Неверный токен', 'Проверьте токен. Сервер неузнал его.')
+        return True
+    finally:
+        writer.close()
+        await writer.wait_closed()
 
 
 async def save_messages(filepath, queue):
@@ -87,17 +97,11 @@ async def main(host, read_port, send_port, history_filepath, token):
     save_queue = asyncio.Queue()
     status_updates_queue = asyncio.Queue()
 
-    try:
-        reader, writer = await authorize(host, send_port, token)
-    except InvalidToken:
-        messagebox.showerror('Неверный токен', 'Проверьте токен. Сервер неузнал его.')
-        return
-
     await loading_messages_history(history_filepath, messages_queue)
 
     await asyncio.gather(
-        read_msgs(host, read_port, messages_queue, save_queue),
-        send_msgs(host, send_port, writer, sending_queue),
+        read_msgs(host, read_port, messages_queue, status_updates_queue, save_queue),
+        send_msgs(host, send_port, token, sending_queue, status_updates_queue),
         save_messages(history_filepath, save_queue),
         gui.draw(messages_queue, sending_queue, status_updates_queue)
     )
