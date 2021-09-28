@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 from tkinter import messagebox
 import asyncio
 import aiofiles
+import async_timeout
 import gui
 import time
 import argparse
@@ -34,10 +35,10 @@ async def authorize(host, port, token):
 async def send_msgs(host, port, token, sending_queue, status_updates_queue, watchdog_queue):
     try:
         reader, writer, nickname = await authorize(host, port, token)
-        status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
         status_updates_queue.put_nowait(gui.NicknameReceived(nickname))
         watchdog_queue.put_nowait('Authorization done.')
         while True:
+            status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
             msg = await sending_queue.get()
             writer.write(f'{msg}\n\n'.encode())
             await writer.drain()
@@ -54,12 +55,17 @@ async def send_msgs(host, port, token, sending_queue, status_updates_queue, watc
 async def read_msgs(host, port, messages_queue, status_updates_queue, save_queue, watchdog_queue):
     try:
         reader, writer = await asyncio.open_connection(host, port)
-        status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
         while True:
-            msg = await reader.readline()
-            messages_queue.put_nowait(msg.decode())
-            save_queue.put_nowait(msg.decode())
-            watchdog_queue.put_nowait('New message in chat.')
+            try:
+                status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
+                async with async_timeout.timeout(1):
+                    msg = await reader.readline()
+                messages_queue.put_nowait(msg.decode())
+                save_queue.put_nowait(msg.decode())
+                watchdog_queue.put_nowait('New message in chat.')
+            except asyncio.TimeoutError:
+                watchdog_queue.put_nowait('1s timeout is elapsed.')
+                status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.CLOSED)
 
     finally:
         writer.close()
