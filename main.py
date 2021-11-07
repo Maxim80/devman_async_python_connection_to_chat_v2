@@ -45,9 +45,6 @@ def reconnect(func):
             except socket.gaierror:
                 await asyncio.sleep(CONNECTION_TIMEOUT)
                 continue
-            except InvalidToken:
-                messagebox.showerror('Ошибка', 'Не верный токен. Попробуйте зарегистрироваться еще раз')
-                break
 
     return wrapped
 
@@ -183,3 +180,5 @@ if __name__ == '__main__':
         pass
     except gui.TkAppClosed:
         pass
+    except InvalidToken:
+        messagebox.showerror('Ошибка', 'Не верный токен. Попробуйте зарегистрироваться еще раз')
