@@ -16,15 +16,18 @@ import json
 
 load_dotenv()
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger('watchdog_logger')
 
 HOST = 'minechat.dvmn.org'
 READ_PORT = 5000
 SEND_PORT = 5050
 MINECHAT_ACCESS_TOKEN = os.getenv('MINECHAT_ACCESS_TOKEN')
 HISTORY_FILEPATH = './minechat.history'
-CONNECTION_TIMEOUT = 3
+CONNECTION_TIMEOUT = 5
+CHECKING_CONNECTION_TIMEOUT = 3
+
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger('watchdog_logger')
 
 
 class InvalidToken(Exception):
@@ -42,6 +45,9 @@ def reconnect(func):
             except socket.gaierror:
                 await asyncio.sleep(CONNECTION_TIMEOUT)
                 continue
+            except InvalidToken:
+                messagebox.showerror('Ошибка', 'Не верный токен. Попробуйте зарегистрироваться еще раз')
+                break
 
     return wrapped
 
@@ -135,7 +141,7 @@ async def checking_connection(reader, writer, watchdog_queue):
         await writer.drain()
         answer = await reader.readline()
         watchdog_queue.put_nowait(answer.decode())
-        await asyncio.sleep(5)
+        await asyncio.sleep(CHECKING_CONNECTION_TIMEOUT)
 
 
 @reconnect
@@ -171,4 +177,9 @@ async def main():
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+    except gui.TkAppClosed:
+        pass
